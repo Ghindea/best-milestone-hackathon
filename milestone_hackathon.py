@@ -29,7 +29,27 @@ messages = [
         "content": [
             {
                 "type": "image",
-                "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+                "image": "./photos/121321.png", # Path to your second image
+            },
+
+            {
+                "type": "image",
+                "image": "./photos/121423.png", # Path to your second image
+            },
+
+            {
+                "type": "image",
+                "image": "./photos/121452.png", # Path to your second image
+            },
+
+            {
+                "type": "image",
+                "image": "./photos/122053.png", # Path to your second image
+            },
+
+            {
+                "type": "image",
+                "image": "./photos/122124.png", # Path to your second image
             },
             {"type": "text", "text": "Describe this image."},
         ],
