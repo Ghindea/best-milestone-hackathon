@@ -1,66 +1,48 @@
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+import os
+from PIL import Image
+import torch
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
-# default: Load the model on the available device(s)
+# Setare automată pe CUDA dacă e disponibil
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Încarcă modelul cu flash_attention_2 (dacă e suportat)
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-    "Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", device_map="auto"
+    "Qwen/Qwen2.5-VL-7B-Instruct",
+    torch_dtype="auto",
+    # attn_implementation="flash_attention_2",
+    device_map="auto",
 )
 
-# We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
-# model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-#     "Qwen/Qwen2.5-VL-3B-Instruct",
-#     torch_dtype=torch.bfloat16,
-#     attn_implementation="flash_attention_2",
-#     device_map="auto",
-# )
+# Procesorul (folosește tokenizer, image processor etc.)
+processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
 
-# default processer
-processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+# === 1. Încarcă și procesează imaginile din photos/ ===
+image_dir = "./photos"
 
-# The default range for the number of visual tokens per image in the model is 4-16384.
-# You can set min_pixels and max_pixels according to your needs, such as a token range of 256-1280, to balance performance and cost.
-# min_pixels = 256*28*28
-# max_pixels = 1280*28*28
-# processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels)
+# Preia toate fișierele imagine din folder, sortează, și selectează 1 din 3
+image_files = sorted([
+    os.path.join(image_dir, f)
+    for f in os.listdir(image_dir)
+    if f.lower().endswith((".png", ".jpg", ".jpeg"))
+])[::3]  # fiecare al 3-lea frame
 
-messages = [
-    {
-        "role": "user",
-        "content": [
-            {
-                "type": "image",
-                "image": "./photos/121321.png", # Path to your second image
-            },
+# Resize funcțional (512x512)
+def resize_image(path, size=(512, 512)):
+    img = Image.open(path).convert("RGB")
+    return img.resize(size)
 
-            {
-                "type": "image",
-                "image": "./photos/121423.png", # Path to your second image
-            },
+# Creează mesajul cu toate imaginile redimensionate și o singură întrebare
+message_content = [{"type": "image", "image": resize_image(p)} for p in image_files]
+message_content.append({"type": "text", "text": "Describe the scene in the images as a coherent story, with details about the people and the environment."})
 
-            {
-                "type": "image",
-                "image": "./photos/121452.png", # Path to your second image
-            },
+messages = [{"role": "user", "content": message_content}]
 
-            {
-                "type": "image",
-                "image": "./photos/122053.png", # Path to your second image
-            },
-
-            {
-                "type": "image",
-                "image": "./photos/122124.png", # Path to your second image
-            },
-            {"type": "text", "text": "Describe this image."},
-        ],
-    }
-]
-
-# Preparation for inference
-text = processor.apply_chat_template(
-    messages, tokenize=False, add_generation_prompt=True
-)
+# === 2. Pregătește datele pentru model ===
+text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 image_inputs, video_inputs = process_vision_info(messages)
+
 inputs = processor(
     text=[text],
     images=image_inputs,
@@ -68,23 +50,26 @@ inputs = processor(
     padding=True,
     return_tensors="pt",
 )
-inputs = inputs.to("cuda")
 
-# Inference: Generation of the output
-generated_ids = model.generate(**inputs, max_new_tokens=128)
+inputs = inputs.to(device)
+
+# === 3. Generează output ===
+generated_ids = model.generate(**inputs, max_new_tokens=512)
+
+# Curăță output-ul
 generated_ids_trimmed = [
-    out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
 ]
 output_text = processor.batch_decode(
-    generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    generated_ids_trimmed,
+    skip_special_tokens=True,
+    clean_up_tokenization_spaces=False
 )
-print(output_text)
 
-# save the output in a json file
-# Save to file
+# === 4. Scrie rezultatul în fișier ===
 with open("output.txt", "w", encoding="utf-8") as f:
     for line in output_text:
         f.write(line + "\n")
 
-# Optional: Also print
-print("Saved output to output_7b.txt")
+print("✅ Output generat și salvat în output.txt:")
+print(output_text[0])
